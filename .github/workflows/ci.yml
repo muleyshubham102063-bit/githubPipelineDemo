@@ -1,18 +1,27 @@
 name: CI/CD Pipeline
 
-# Trigger workflow on every push or pull request to the main branch
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
 
+# Grant the workflow permissions required to deploy to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
 jobs:
   # Job 1: Run Unit Tests
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -29,12 +38,11 @@ jobs:
       - name: Execute Tests
         run: npm test
 
-  # Job 2: Build Application (runs only if test job passes)
+  # Job 2: Build Application
   build:
     name: Build Project
     needs: test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -51,8 +59,27 @@ jobs:
       - name: Run Build Script
         run: npm run build
 
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+      # Create an HTML entry point in dist for GitHub Pages to serve
+      - name: Create index.html for demo
+        run: |
+          echo "<html><head><title>GitHub Pipeline Demo</title></head><body><h1>🚀 Deployed Successfully via GitHub Actions!</h1><p>Built automatically on push to main.</p></body></html>" > dist/index.html
+
+      # Upload the dist directory directly as a GitHub Pages artifact
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: compiled-dist
-          path: dist/
+          path: 'dist/'
+
+  # Job 3: Deploy to GitHub Pages (Only runs on push to main, not on PRs)
+  deploy:
+    name: Deploy to Production
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
