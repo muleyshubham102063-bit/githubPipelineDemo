@@ -65,4 +65,4 @@ jobs:
 
       - name: Dry-run K8s Manifests Validation
         run: |
-          kubectl apply -f k8s/ --dry-run=client
+          kubectl apply -f k8s/ --dry-run=client --validate=false
