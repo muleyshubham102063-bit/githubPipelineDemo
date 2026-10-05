@@ -49,20 +49,28 @@ jobs:
 
   # Job 3: Validate & Deploy K8s Manifests
   k8s-deploy:
-    name: Validate & Deploy to Kubernetes
+    name: Deploy to KinD Cluster
     needs: docker-build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
+      - name: Create KinD Kubernetes Cluster
+        uses: helm/kind-action@v1.9.0
+        with:
+          cluster_name: kind-cluster
 
       - name: Substitute Image Tag in K8s Manifest
         run: |
           sed -i "s|DOCKERHUB_USERNAME|${{ secrets.DOCKERHUB_USERNAME }}|g" k8s/deployment.yaml
 
-      - name: Dry-run K8s Manifests Validation
+      - name: Deploy Manifests to Kubernetes
         run: |
-          kubectl apply -f k8s/ --dry-run=client --validate=false
+          kubectl apply -f k8s/
+
+      - name: Verify Deployment Rollout
+        run: |
+          kubectl rollout status deployment/node-pipeline-app --timeout=60s
+          kubectl get pods -o wide
+          kubectl get svc
