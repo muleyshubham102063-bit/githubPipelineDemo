@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CI/CD Docker & Kubernetes Pipeline
 
 on:
   push:
@@ -6,80 +6,63 @@ on:
   pull_request:
     branches: [ main ]
 
-# Grant the workflow permissions required to deploy to GitHub Pages
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# Allow only one concurrent deployment
-concurrency:
-  group: 'pages'
-  cancel-in-progress: true
-
 jobs:
-  # Job 1: Run Unit Tests
+  # Job 1: Unit Testing
   test:
-    name: Run Tests
+    name: Run Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
+      - run: npm ci
+      - run: npm test
 
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Execute Tests
-        run: npm test
-
-  # Job 2: Build Application
-  build:
-    name: Build Project
+  # Job 2: Build & Push Docker Image
+  docker-build:
+    name: Build & Push Docker Image
     needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Run Build Script
-        run: npm run build
-
-      # Create an HTML entry point in dist for GitHub Pages to serve
-      - name: Create index.html for demo
-        run: |
-          echo "<html><head><title>GitHub Pipeline Demo</title></head><body><h1>🚀 Deployed Successfully via GitHub Actions!</h1><p>Built automatically on push to main.</p></body></html>" > dist/index.html
-
-      # Upload the dist directory directly as a GitHub Pages artifact
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: 'dist/'
-
-  # Job 3: Deploy to GitHub Pages (Only runs on push to main, not on PRs)
-  deploy:
-    name: Deploy to Production
-    needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/github-pipeline-demo:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/github-pipeline-demo:${{ github.sha }}
+
+  # Job 3: Validate & Deploy K8s Manifests
+  k8s-deploy:
+    name: Validate & Deploy to Kubernetes
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Substitute Image Tag in K8s Manifest
+        run: |
+          sed -i "s|DOCKERHUB_USERNAME|${{ secrets.DOCKERHUB_USERNAME }}|g" k8s/deployment.yaml
+
+      - name: Dry-run K8s Manifests Validation
+        run: |
+          kubectl apply -f k8s/ --dry-run=client
